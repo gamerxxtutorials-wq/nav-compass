@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#e6dcc4">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="application-name" content="GPS Compass">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="GPS Compass">
+  <meta name="description" content="Live coordinates, compass heading, and a topographic chart of the area around you.">
+  <title>GPS Compass</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23e6dcc4' stroke='%231c2833' stroke-width='1.5'/%3E%3Cpath d='M16 4 L18.2 16 L16 16 Z' fill='%237a2a2a'/%3E%3Cpath d='M16 4 L13.8 16 L16 16 Z' fill='%231c2833'/%3E%3Cpath d='M16 28 L18.2 16 L16 16 Z' fill='%231c2833'/%3E%3Cpath d='M16 28 L13.8 16 L16 16 Z' fill='%23f3ead6'/%3E%3Cpath d='M28 16 L16 18.2 L16 16 Z' fill='%231c2833'/%3E%3Cpath d='M28 16 L16 13.8 L16 16 Z' fill='%23f3ead6'/%3E%3Cpath d='M4 16 L16 18.2 L16 16 Z' fill='%23f3ead6'/%3E%3Cpath d='M4 16 L16 13.8 L16 16 Z' fill='%231c2833'/%3E%3Ccircle cx='16' cy='16' r='2' fill='%23e6dcc4' stroke='%231c2833'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <style>
+    :root {
+      --paper: #e6dcc4;
+      --paper-2: #d8ccb0;
+      --ink: #1c2833;
+      --ink-soft: #3d4a54;
+      --muted: #6a6254;
+      --grid: rgba(50, 80, 100, 0.13);
+      --grid-strong: rgba(50, 80, 100, 0.22);
+      --brass: #9a7b4f;
+      --brass-light: #c4a36a;
+      --panel: #141c20;
+      --amber: #e6d3a1;
+      --amber-dim: #b9a575;
+      --crimson: #7a2a2a;
+      --safe-t: env(safe-area-inset-top, 0px);
+      --safe-b: env(safe-area-inset-bottom, 0px);
+      --font-map: "Palatino Linotype", Palatino, "Book Antiqua", Georgia, "Times New Roman", serif;
+      --font-inst: ui-monospace, "Cascadia Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { min-height: 100%; }
+    body {
+      font-family: var(--font-map);
+      color: var(--ink);
+      background-color: var(--paper);
+      background-image:
+        linear-gradient(var(--grid) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid) 1px, transparent 1px),
+        linear-gradient(var(--grid-strong) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-strong) 1px, transparent 1px),
+        radial-gradient(ellipse at 12% 0%, rgba(140, 90, 40, 0.14), transparent 52%),
+        radial-gradient(ellipse at 100% 85%, rgba(70, 90, 70, 0.12), transparent 50%);
+      background-size: 24px 24px, 24px 24px, 120px 120px, 120px 120px, auto, auto;
+      line-height: 1.35;
+    }
+
+    .chart-contours {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.35;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 42rem;
+      margin: 0 auto;
+      padding: calc(0.7rem + var(--safe-t)) 0.9rem calc(1rem + var(--safe-b));
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+
+    header.cartouche {
+      text-align: center;
+      border: 2px solid var(--ink);
+      outline: 1px solid var(--brass);
+      outline-offset: 3px;
+      background: rgba(230, 220, 196, 0.82);
+      padding: 0.4rem 0.7rem 0.5rem;
+    }
+    header.cartouche .kicker {
+      font-size: 0.62rem;
+      letter-spacing: 0.28em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    header.cartouche h1 {
+      font-size: 1.22rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-top: 0.1rem;
+    }
+    header.cartouche p {
+      font-size: 0.78rem;
+      color: var(--ink-soft);
+      font-style: italic;
+    }
+
+    .banner {
+      display: none;
+      border: 1.5px solid var(--crimson);
+      background: rgba(122, 42, 42, 0.08);
+      color: var(--crimson);
+      padding: 0.65rem 0.8rem;
+      font-size: 0.88rem;
+    }
+    .banner.visible { display: block; }
+    .banner strong { letter-spacing: 0.08em; text-transform: uppercase; font-size: 0.72rem; }
+
+    .instrument {
+      background: var(--panel);
+      color: var(--amber);
+      border: 2px solid var(--brass);
+      box-shadow: 0 0 0 1px #5c4a2e, inset 0 0 0 1px rgba(196, 163, 106, 0.35);
+      padding: 0.85rem 0.95rem 0.75rem;
+    }
+    .fix-row {
+      display: grid;
+      grid-template-columns: 2.6rem 1fr;
+      align-items: baseline;
+      gap: 0.35rem 0.6rem;
+    }
+    .fix-row + .fix-row { margin-top: 0.2rem; }
+    .fix-row .lab {
+      font-family: var(--font-map);
+      font-size: 0.68rem;
+      letter-spacing: 0.16em;
+      color: var(--amber-dim);
+    }
+    .fix-row .val {
+      font-family: var(--font-inst);
+      font-size: clamp(1.15rem, 5.4vw, 1.55rem);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.04em;
+      color: var(--amber);
+    }
+    .decimal {
+      margin-top: 0.4rem;
+      font-family: var(--font-inst);
+      font-size: 0.78rem;
+      color: var(--amber-dim);
+      letter-spacing: 0.03em;
+      font-variant-numeric: tabular-nums;
+    }
+    .actions {
+      display: flex;
+      gap: 0.5rem;
+      margin-top: 0.7rem;
+    }
+    .actions button, .actions a.btn {
+      flex: 1;
+      appearance: none;
+      text-decoration: none;
+      text-align: center;
+      font-family: var(--font-map);
+      font-size: 0.78rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--panel);
+      background: var(--brass-light);
+      border: 1px solid var(--brass);
+      padding: 0.55rem 0.4rem;
+      cursor: pointer;
+    }
+    .actions button:active, .actions a.btn:active { filter: brightness(0.92); }
+    .actions a.btn[aria-disabled="true"],
+    .actions button:disabled {
+      opacity: 0.45;
+      pointer-events: none;
+    }
+    .copied { color: var(--panel); }
+
+    .map-frame {
+      position: relative;
+      border: 2px solid var(--ink);
+      outline: 1px solid var(--brass);
+      outline-offset: 3px;
+      background: var(--paper-2);
+      min-height: 230px;
+      height: 30vh;
+      max-height: 280px;
+    }
+    #map {
+      position: absolute;
+      inset: 0;
+      background: #d4c6a6;
+    }
+    .leaflet-container { background: #d4c6a6; font-family: var(--font-map); }
+    .leaflet-tile-pane {
+      filter: sepia(0.48) saturate(0.72) contrast(1.06) brightness(1.03);
+    }
+    .leaflet-control-zoom a {
+      background: rgba(230, 220, 196, 0.94) !important;
+      color: var(--ink) !important;
+      border-color: var(--brass) !important;
+      width: 32px !important;
+      height: 32px !important;
+      line-height: 30px !important;
+    }
+    .leaflet-bar { border-color: var(--brass) !important; }
+    .leaflet-control-attribution {
+      background: rgba(230, 220, 196, 0.9) !important;
+      color: var(--muted) !important;
+      font-size: 9px !important;
+      max-width: 72%;
+      line-height: 1.3;
+    }
+    .leaflet-control-attribution a { color: var(--ink-soft) !important; }
+
+    .map-tools {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .map-tools button {
+      font-family: var(--font-map);
+      font-size: 0.68rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      background: rgba(230, 220, 196, 0.94);
+      color: var(--ink);
+      border: 1px solid var(--brass);
+      padding: 0.45rem 0.55rem;
+      cursor: pointer;
+      min-width: 5.6rem;
+    }
+    .map-tools button[aria-pressed="true"] {
+      background: var(--panel);
+      color: var(--amber);
+      border-color: var(--brass-light);
+    }
+
+    .fix-icon {
+      background: none !important;
+      border: none !important;
+    }
+    .fix-wrap { position: relative; width: 70px; height: 88px; }
+    .heading-cone {
+      position: absolute;
+      left: 50%;
+      bottom: 8px;
+      width: 70px;
+      height: 88px;
+      transform-origin: 50% 100%;
+      transform: translate(-50%, 0) rotate(var(--h, 0deg));
+      pointer-events: none;
+      opacity: 0;
+    }
+    .heading-cone.on { opacity: 1; }
+    .fix-dot {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      width: 16px;
+      height: 16px;
+      margin: 0 0 0 -8px;
+      border-radius: 50%;
+      background: var(--crimson);
+      border: 2px solid #f3ead6;
+      box-shadow: 0 0 0 1.5px var(--ink), 0 1px 3px rgba(0,0,0,0.4);
+    }
+
+    .compass-block {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.35rem;
+    }
+    .compass {
+      position: relative;
+      width: min(60vw, 230px);
+      aspect-ratio: 1;
+    }
+    .lubber {
+      position: absolute;
+      left: 50%;
+      top: -4px;
+      z-index: 3;
+      width: 16px;
+      margin-left: -8px;
+      pointer-events: none;
+    }
+    .lubber-line {
+      position: absolute;
+      left: 50%;
+      top: 14px;
+      width: 2px;
+      height: 18%;
+      margin-left: -1px;
+      background: var(--crimson);
+      z-index: 3;
+      pointer-events: none;
+      box-shadow: 0 0 0 1px rgba(230, 220, 196, 0.6);
+    }
+    #rose {
+      width: 100%;
+      height: 100%;
+      display: block;
+      overflow: visible;
+    }
+    .bearing {
+      text-align: center;
+    }
+    .bearing .deg {
+      font-family: var(--font-inst);
+      font-size: 1.85rem;
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.08em;
+      line-height: 1;
+    }
+    .bearing .card {
+      font-size: 1.05rem;
+      letter-spacing: 0.18em;
+      margin-left: 0.35rem;
+    }
+    .source {
+      font-size: 0.72rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.45rem;
+    }
+    .stat {
+      border: 1px solid var(--brass);
+      background: rgba(230, 220, 196, 0.7);
+      padding: 0.45rem 0.35rem 0.5rem;
+      text-align: center;
+    }
+    .stat .lab {
+      font-size: 0.62rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .stat .val {
+      font-family: var(--font-inst);
+      font-size: 0.82rem;
+      font-variant-numeric: tabular-nums;
+      margin-top: 0.15rem;
+    }
+
+    #btn-compass {
+      display: none;
+      width: 100%;
+      font-family: var(--font-map);
+      font-size: 0.85rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      background: var(--panel);
+      color: var(--amber);
+      border: 2px solid var(--brass);
+      padding: 0.7rem;
+      cursor: pointer;
+    }
+    #btn-compass.visible { display: block; }
+
+    footer.notes {
+      font-size: 0.72rem;
+      color: var(--muted);
+      text-align: center;
+      line-height: 1.45;
+    }
+
+    @media (min-height: 800px) {
+      .map-frame { height: 280px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #rose, .heading-cone { transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <svg class="chart-contours" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" viewBox="0 0 800 1400" aria-hidden="true">
+    <g fill="none" stroke="#7a5530" stroke-width="1.1">
+      <path d="M-20,180 C80,140 160,230 280,200 C400,170 460,110 580,150 C700,190 780,140 840,170"/>
+      <path d="M-20,220 C90,190 170,270 300,240 C430,210 500,160 620,200 C730,235 790,190 840,210"/>
+      <path d="M40,520 C140,480 220,560 340,530 C470,495 540,560 680,520 C760,500 820,540 860,530"/>
+      <path d="M-10,560 C120,530 200,600 330,570 C460,540 560,610 700,565 C780,545 830,590 860,580"/>
+      <path d="M100,900 C200,860 280,940 420,910 C540,880 620,960 760,920"/>
+      <path d="M80,940 C200,910 290,980 430,950 C560,920 650,1000 800,960"/>
+      <path d="M-30,1180 C90,1140 210,1220 360,1185 C510,1150 640,1230 840,1190"/>
+    </g>
+  </svg>
+
+  <div class="page">
+    <header class="cartouche">
+      <div class="kicker">Navigational Plot</div>
+      <h1>Position &amp; Heading</h1>
+      <p>Live fix, compass bearing, and local relief</p>
+    </header>
+
+    <div id="banner" class="banner" role="status"></div>
+
+    <section class="instrument" aria-label="Coordinates">
+      <div class="fix-row">
+        <span class="lab">LAT</span>
+        <span class="val" id="lat-ddm">— — —.---′ —</span>
+      </div>
+      <div class="fix-row">
+        <span class="lab">LON</span>
+        <span class="val" id="lon-ddm">— — —.---′ —</span>
+      </div>
+      <div class="decimal" id="decimal">Waiting for a position fix…</div>
+      <div class="actions">
+        <button type="button" id="btn-copy" disabled>Copy coordinates</button>
+        <a class="btn" id="btn-maps" href="#" target="_blank" rel="noopener" aria-disabled="true">Open in Maps</a>
+      </div>
+    </section>
+
+    <section class="map-frame" aria-label="Local chart">
+      <div id="map" role="application" aria-label="Topographic map of your area"></div>
+      <div class="map-tools">
+        <button type="button" id="btn-follow" aria-pressed="true" title="Keep the map centered on you">Following</button>
+        <button type="button" id="btn-recenter" title="Center the map on your position">Recenter</button>
+      </div>
+    </section>
+
+    <section class="compass-block" aria-label="Compass">
+      <div class="compass">
+        <svg class="lubber" viewBox="0 0 16 22" aria-hidden="true">
+          <polygon points="8,0 16,16 8,12 0,16" fill="#7a2a2a" stroke="#1c2833" stroke-width="0.6"/>
+        </svg>
+        <div class="lubber-line"></div>
+        <svg id="rose" viewBox="0 0 400 400" role="img" aria-label="Compass rose"></svg>
+      </div>
+      <div class="bearing">
+        <span class="deg" id="bearing">---°</span>
+        <span class="card" id="cardinal">—</span>
+      </div>
+      <div class="source" id="source">No heading yet</div>
+    </section>
+
+    <div class="stats">
+      <div class="stat">
+        <div class="lab">Accuracy</div>
+        <div class="val" id="accuracy">—</div>
+      </div>
+      <div class="stat">
+        <div class="lab">Altitude</div>
+        <div class="val" id="altitude">—</div>
+      </div>
+      <div class="stat">
+        <div class="lab">Speed</div>
+        <div class="val" id="speed">—</div>
+      </div>
+    </div>
+
+    <button type="button" id="btn-compass">Enable compass</button>
+
+    <footer class="notes">
+      Location and compass require HTTPS or localhost.
+      In Chrome, open the menu and choose Add to Home screen.
+      Heading is the direction the top of the phone is facing (device compass), or GPS course when you are moving if the compass is unavailable.
+    </footer>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+  (function () {
+    "use strict";
+
+    var CARDINALS = ["N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+    var MS_TO_MPH = 2.236936;
+    var M_TO_FT = 3.28084;
+
+    var els = {
+      banner: document.getElementById("banner"),
+      latDdm: document.getElementById("lat-ddm"),
+      lonDdm: document.getElementById("lon-ddm"),
+      decimal: document.getElementById("decimal"),
+      btnCopy: document.getElementById("btn-copy"),
+      btnMaps: document.getElementById("btn-maps"),
+      btnFollow: document.getElementById("btn-follow"),
+      btnRecenter: document.getElementById("btn-recenter"),
+      btnCompass: document.getElementById("btn-compass"),
+      rose: document.getElementById("rose"),
+      bearing: document.getElementById("bearing"),
+      cardinal: document.getElementById("cardinal"),
+      source: document.getElementById("source"),
+      accuracy: document.getElementById("accuracy"),
+      altitude: document.getElementById("altitude"),
+      speed: document.getElementById("speed")
+    };
+
+    var state = {
+      lat: null,
+      lon: null,
+      accuracy: null,
+      altitude: null,
+      speed: null,
+      gpsHeading: null,
+      compassHeading: null,
+      heading: null,
+      headingSource: null,
+      follow: true,
+      roseDeg: 0,
+      orientationLive: false
+    };
+
+    var map = null;
+    var marker = null;
+    var accuracyCircle = null;
+    var coneEl = null;
+
+    function showBanner(html) {
+      els.banner.innerHTML = html;
+      els.banner.classList.add("visible");
+    }
+    function hideBanner() {
+      els.banner.classList.remove("visible");
+      els.banner.innerHTML = "";
+    }
+
+    function pad3(n) {
+      return String(n).padStart(3, "0");
+    }
+
+    function toDDM(decimal, isLat) {
+      var hemi = isLat ? (decimal >= 0 ? "N" : "S") : (decimal >= 0 ? "E" : "W");
+      var abs = Math.abs(decimal);
+      var deg = Math.floor(abs);
+      var minutes = (abs - deg) * 60;
+      if (minutes >= 59.9995) {
+        minutes = 0;
+        deg += 1;
+      }
+      var degStr = isLat ? String(deg) : pad3(deg);
+      var minStr = minutes.toFixed(3);
+      if (minutes < 10) minStr = "0" + minStr;
+      return degStr + "° " + minStr + "′ " + hemi;
+    }
+
+    function toDecimalLine(lat, lon) {
+      var latH = lat >= 0 ? "N" : "S";
+      var lonH = lon >= 0 ? "E" : "W";
+      return Math.abs(lat).toFixed(6) + "° " + latH + "   " + Math.abs(lon).toFixed(6) + "° " + lonH;
+    }
+
+    function cardinalOf(heading) {
+      var idx = Math.round(heading / 22.5) % 16;
+      return CARDINALS[idx];
+    }
+
+    function fmtMetersFeet(meters, prefix) {
+      var m = meters >= 10 ? meters.toFixed(0) : meters.toFixed(1);
+      var ft = meters * M_TO_FT;
+      var f = ft >= 10 ? ft.toFixed(0) : ft.toFixed(1);
+      return (prefix || "") + m + " m  /  " + f + " ft";
+    }
+
+    function shortestSpin(current, target) {
+      var currentMod = ((current % 360) + 360) % 360;
+      var tgt = ((target % 360) + 360) % 360;
+      var delta = tgt - currentMod;
+      if (delta > 180) delta -= 360;
+      if (delta < -180) delta += 360;
+      return current + delta;
+    }
+
+    function buildRose() {
+      var svg = els.rose;
+      var ns = "http://www.w3.org/2000/svg";
+      function el(name, attrs) {
+        var n = document.createElementNS(ns, name);
+        for (var k in attrs) n.setAttribute(k, attrs[k]);
+        return n;
+      }
+      svg.appendChild(el("defs", {}));
+      var cx = 200, cy = 200;
+
+      svg.appendChild(el("circle", { cx: cx, cy: cy, r: 198, fill: "#efe6d2", stroke: "#1c2833", "stroke-width": "2.2" }));
+      svg.appendChild(el("circle", { cx: cx, cy: cy, r: 188, fill: "none", stroke: "#9a7b4f", "stroke-width": "1.2" }));
+      svg.appendChild(el("circle", { cx: cx, cy: cy, r: 170, fill: "none", stroke: "#1c2833", "stroke-width": "1" }));
+
+      var ticks = el("g", { fill: "none", stroke: "#1c2833" });
+      for (var d = 0; d < 360; d++) {
+        var rad = (d - 90) * Math.PI / 180;
+        var inner, w;
+        if (d % 30 === 0) { inner = 152; w = 2; }
+        else if (d % 10 === 0) { inner = 158; w = 1.4; }
+        else if (d % 5 === 0) { inner = 162; w = 1.1; }
+        else { inner = 165; w = 0.7; }
+        var x1 = cx + Math.cos(rad) * 170;
+        var y1 = cy + Math.sin(rad) * 170;
+        var x2 = cx + Math.cos(rad) * inner;
+        var y2 = cy + Math.sin(rad) * inner;
+        ticks.appendChild(el("line", { x1: x1, y1: y1, x2: x2, y2: y2, "stroke-width": String(w) }));
+      }
+      svg.appendChild(ticks);
+
+      var nums = el("g", { fill: "#1c2833", "font-family": "ui-monospace, Menlo, Consolas, monospace", "font-size": "13", "text-anchor": "middle" });
+      for (var n = 0; n < 360; n += 30) {
+        var r = (n - 90) * Math.PI / 180;
+        var tx = cx + Math.cos(r) * 142;
+        var ty = cy + Math.sin(r) * 142 + 4;
+        var t = el("text", { x: tx, y: ty });
+        t.textContent = String(n);
+        nums.appendChild(t);
+      }
+      svg.appendChild(nums);
+
+      function lance(len, halfW, angle, left, right) {
+        var a = (angle - 90) * Math.PI / 180;
+        var px = cx + Math.cos(a) * len;
+        var py = cy + Math.sin(a) * len;
+        var leftA = a + Math.PI / 2;
+        var lx = cx + Math.cos(leftA) * halfW;
+        var ly = cy + Math.sin(leftA) * halfW;
+        var rx = cx - Math.cos(leftA) * halfW;
+        var ry = cy - Math.sin(leftA) * halfW;
+        var g = el("g", {});
+        g.appendChild(el("polygon", { points: [px, py, lx, ly, cx, cy].join(" "), fill: left, stroke: "#1c2833", "stroke-width": "0.7" }));
+        g.appendChild(el("polygon", { points: [px, py, rx, ry, cx, cy].join(" "), fill: right, stroke: "#1c2833", "stroke-width": "0.7" }));
+        return g;
+      }
+
+      var dark = "#1c2833", light = "#f3ead6", red = "#7a2a2a";
+      var halfWinds = [22.5, 67.5, 112.5, 157.5, 202.5, 247.5, 292.5, 337.5];
+      halfWinds.forEach(function (a) { svg.appendChild(lance(108, 5, a, dark, light)); });
+      svg.appendChild(lance(126, 9, 45, dark, light));
+      svg.appendChild(lance(126, 9, 135, dark, light));
+      svg.appendChild(lance(126, 9, 225, dark, light));
+      svg.appendChild(lance(126, 9, 315, dark, light));
+      svg.appendChild(lance(136, 13, 90, dark, light));
+      svg.appendChild(lance(136, 13, 180, dark, light));
+      svg.appendChild(lance(136, 13, 270, dark, light));
+      svg.appendChild(lance(146, 14, 0, red, "#3a1515"));
+
+      function label(text, angle, r, opts) {
+        var rad = (angle - 90) * Math.PI / 180;
+        var t = el("text", {
+          x: cx + Math.cos(rad) * r,
+          y: cy + Math.sin(rad) * r + (opts.dy || 6),
+          fill: opts.fill || "#1c2833",
+          "font-family": "Palatino Linotype, Palatino, Georgia, serif",
+          "font-size": String(opts.size || 22),
+          "font-weight": "700",
+          "text-anchor": "middle"
+        });
+        t.textContent = text;
+        svg.appendChild(t);
+      }
+      label("N", 0, 118, { size: 28, fill: "#7a2a2a", dy: 9 });
+      label("E", 90, 116, { size: 22, dy: 8 });
+      label("S", 180, 116, { size: 22, dy: 8 });
+      label("W", 270, 116, { size: 22, dy: 8 });
+
+      svg.appendChild(el("circle", { cx: cx, cy: cy, r: 16, fill: "#efe6d2", stroke: "#1c2833", "stroke-width": "1.6" }));
+      svg.appendChild(el("circle", { cx: cx, cy: cy, r: 6, fill: "#7a2a2a", stroke: "#1c2833", "stroke-width": "0.8" }));
+    }
+
+    function computeHeading(alpha, beta, gamma) {
+      var d = Math.PI / 180;
+      var x = (beta || 0) * d;
+      var y = (gamma || 0) * d;
+      var z = (alpha || 0) * d;
+      var cX = Math.cos(x), cY = Math.cos(y), cZ = Math.cos(z);
+      var sX = Math.sin(x), sY = Math.sin(y), sZ = Math.sin(z);
+      var Vx = -cZ * sY - sZ * sX * cY;
+      var Vy = -sZ * sY + cZ * sX * cY;
+      var heading = Math.atan2(Vx, Vy) * (180 / Math.PI);
+      if (heading < 0) heading += 360;
+      return heading;
+    }
+
+    function resolveHeading() {
+      if (state.compassHeading != null && !isNaN(state.compassHeading)) {
+        return { heading: state.compassHeading, source: "Device compass" };
+      }
+      if (state.gpsHeading != null && !isNaN(state.gpsHeading)) {
+        var moving = state.speed == null || state.speed > 0.6;
+        if (moving) return { heading: state.gpsHeading, source: "GPS course" };
+      }
+      return { heading: null, source: "No heading yet" };
+    }
+
+    function applyHeadingDisplay() {
+      var resolved = resolveHeading();
+      state.heading = resolved.heading;
+      state.headingSource = resolved.source;
+      els.source.textContent = resolved.source;
+      if (resolved.heading == null) {
+        els.bearing.textContent = "---°";
+        els.cardinal.textContent = "—";
+        if (coneEl) coneEl.classList.remove("on");
+        return;
+      }
+      var h = resolved.heading;
+      els.bearing.textContent = pad3(Math.round(h) % 360) + "°";
+      els.cardinal.textContent = cardinalOf(h);
+      state.roseDeg = shortestSpin(state.roseDeg, -h);
+      els.rose.style.transition = "transform 0.22s ease-out";
+      els.rose.style.transform = "rotate(" + state.roseDeg + "deg)";
+      if (coneEl) {
+        coneEl.style.setProperty("--h", h + "deg");
+        coneEl.classList.add("on");
+      }
+    }
+
+    function setCompassHeading(deg) {
+      state.compassHeading = ((deg % 360) + 360) % 360;
+      state.orientationLive = true;
+      els.btnCompass.classList.remove("visible");
+      applyHeadingDisplay();
+    }
+
+    function onOrientation(ev) {
+      if (ev.webkitCompassHeading != null && !isNaN(ev.webkitCompassHeading)) {
+        setCompassHeading(ev.webkitCompassHeading);
+        return;
+      }
+      if (ev.alpha == null) return;
+      setCompassHeading(computeHeading(ev.alpha, ev.beta, ev.gamma));
+    }
+
+    function startOrientationListeners() {
+      window.addEventListener("deviceorientationabsolute", onOrientation, true);
+      window.addEventListener("deviceorientation", function (ev) {
+        if (ev.absolute || ev.webkitCompassHeading != null) onOrientation(ev);
+      }, true);
+    }
+
+    function enableCompassFromTap() {
+      var req = typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function";
+      if (req) {
+        DeviceOrientationEvent.requestPermission().then(function (perm) {
+          if (perm === "granted") {
+            startOrientationListeners();
+            hideBanner();
+          } else {
+            showBanner("<strong>Compass denied.</strong> Heading will use GPS course when you are moving.");
+          }
+        }).catch(function () {
+          showBanner("<strong>Compass unavailable.</strong> Heading will use GPS course when you are moving.");
+        });
+      } else {
+        startOrientationListeners();
+      }
+    }
+
+    function markerIcon() {
+      var html =
+        '<div class="fix-wrap" style="width:70px;height:88px;">' +
+          '<div class="heading-cone">' +
+            '<svg viewBox="0 0 70 88" width="70" height="88" aria-hidden="true">' +
+              '<defs><linearGradient id="coneFade" x1="0" y1="1" x2="0" y2="0">' +
+                '<stop offset="0" stop-color="#7a2a2a" stop-opacity="0.5"/>' +
+                '<stop offset="1" stop-color="#7a2a2a" stop-opacity="0.04"/>' +
+              '</linearGradient></defs>' +
+              '<polygon points="35,88 4,4 66,4" fill="url(#coneFade)"/>' +
+            '</svg>' +
+          '</div>' +
+          '<div class="fix-dot"></div>' +
+        '</div>';
+      return L.divIcon({
+        className: "fix-icon",
+        html: html,
+        iconSize: [70, 88],
+        iconAnchor: [35, 80]
+      });
+    }
+
+    function initMap() {
+      if (typeof L === "undefined") {
+        document.getElementById("map").innerHTML =
+          '<p style="padding:1rem;color:#3d4a54;text-align:center;font-size:0.9rem;">Map needs a network connection to load chart tiles.</p>';
+        return;
+      }
+      map = L.map("map", {
+        zoomControl: true,
+        attributionControl: true,
+        worldCopyJump: true
+      }).setView([20, 0], 2);
+
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Hillshade/MapServer/tile/{z}/{y}/{x}", {
+        className: "hillshade-layer",
+        maxZoom: 19,
+        attribution: "Hillshade © Esri — Source: Esri, USGS"
+      }).addTo(map);
+
+      L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}", {
+        className: "topo-layer",
+        maxZoom: 19,
+        opacity: 0.72,
+        attribution: "Topo © Esri — Sources: Esri, USGS, NOAA, NPS, and the GIS User Community"
+      }).addTo(map);
+
+      map.on("dragstart", function () { setFollow(false); });
+    }
+
+    function setFollow(on) {
+      state.follow = on;
+      els.btnFollow.setAttribute("aria-pressed", on ? "true" : "false");
+      els.btnFollow.textContent = on ? "Following" : "Follow";
+    }
+
+    function recenter() {
+      if (state.lat == null || !map) return;
+      setFollow(true);
+      map.setView([state.lat, state.lon], Math.max(map.getZoom(), 15), { animate: true });
+    }
+
+    function updateMapPosition() {
+      if (!map || state.lat == null) return;
+      var ll = L.latLng(state.lat, state.lon);
+      if (!marker) {
+        marker = L.marker(ll, { icon: markerIcon(), keyboard: false, zIndexOffset: 600 }).addTo(map);
+        coneEl = marker.getElement() ? marker.getElement().querySelector(".heading-cone") : null;
+        map.setView(ll, 16, { animate: false });
+        applyHeadingDisplay();
+      } else {
+        marker.setLatLng(ll);
+        if (!coneEl && marker.getElement()) coneEl = marker.getElement().querySelector(".heading-cone");
+        applyHeadingDisplay();
+      }
+      if (state.accuracy != null) {
+        if (!accuracyCircle) {
+          accuracyCircle = L.circle(ll, {
+            radius: state.accuracy,
+            color: "#7a2a2a",
+            weight: 1,
+            fillColor: "#7a2a2a",
+            fillOpacity: 0.08
+          }).addTo(map);
+        } else {
+          accuracyCircle.setLatLng(ll);
+          accuracyCircle.setRadius(state.accuracy);
+        }
+      }
+      if (state.follow) {
+        map.panTo(ll, { animate: true, duration: 0.35 });
+      }
+    }
+
+    function applyPosition(coords) {
+      state.lat = coords.latitude;
+      state.lon = coords.longitude;
+      state.accuracy = coords.accuracy != null ? coords.accuracy : null;
+      state.altitude = coords.altitude;
+      state.speed = coords.speed;
+      state.gpsHeading = coords.heading != null && !isNaN(coords.heading) ? coords.heading : null;
+
+      els.latDdm.textContent = toDDM(state.lat, true);
+      els.lonDdm.textContent = toDDM(state.lon, false);
+      els.decimal.textContent = toDecimalLine(state.lat, state.lon);
+      els.btnCopy.disabled = false;
+      els.btnMaps.removeAttribute("aria-disabled");
+      els.btnMaps.href = "https://maps.google.com/?q=" + state.lat + "," + state.lon;
+
+      if (state.accuracy != null) els.accuracy.textContent = fmtMetersFeet(state.accuracy, "± ");
+      else els.accuracy.textContent = "—";
+
+      if (state.altitude != null && !isNaN(state.altitude)) els.altitude.textContent = fmtMetersFeet(state.altitude, "");
+      else els.altitude.textContent = "—";
+
+      if (state.speed != null && !isNaN(state.speed) && state.speed >= 0) {
+        var mph = state.speed * MS_TO_MPH;
+        els.speed.textContent = state.speed.toFixed(1) + " m/s  /  " + mph.toFixed(1) + " mph";
+      } else {
+        els.speed.textContent = "—";
+      }
+
+      applyHeadingDisplay();
+      updateMapPosition();
+    }
+
+    function geoError(err) {
+      var msg;
+      if (!err) {
+        msg = "<strong>Location unavailable.</strong> This browser could not start a position fix.";
+      } else if (err.code === 1) {
+        msg = "<strong>Location permission denied.</strong> In Chrome, tap the lock or tune icon in the address bar and allow Location, or enable it under Site settings.";
+      } else if (err.code === 2) {
+        msg = "<strong>Location unavailable.</strong> Try moving somewhere with a clearer view of the sky, and make sure Location is on for this device.";
+      } else if (err.code === 3) {
+        msg = "<strong>Location timed out.</strong> Still trying to get a more accurate fix…";
+      } else {
+        msg = "<strong>Location error.</strong> " + (err.message || "Could not read your position.");
+      }
+      showBanner(msg);
+    }
+
+    function startGeolocation() {
+      if (!("geolocation" in navigator)) {
+        showBanner("<strong>Geolocation not supported.</strong> This browser cannot report coordinates.");
+        return;
+      }
+      navigator.geolocation.watchPosition(
+        function (pos) {
+          hideBanner();
+          applyPosition(pos.coords);
+        },
+        geoError,
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
+      );
+    }
+
+    function copyCoords() {
+      if (state.lat == null) return;
+      var text = toDDM(state.lat, true) + ", " + toDDM(state.lon, false) + "\n" +
+        state.lat.toFixed(6) + ", " + state.lon.toFixed(6);
+      function ok() {
+        var prev = els.btnCopy.textContent;
+        els.btnCopy.textContent = "Copied";
+        setTimeout(function () { els.btnCopy.textContent = prev; }, 1400);
+      }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(ok).catch(fallback);
+      } else {
+        fallback();
+      }
+      function fallback() {
+        var ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand("copy"); ok(); } catch (e) {}
+        document.body.removeChild(ta);
+      }
+    }
+
+    buildRose();
+    els.btnCopy.addEventListener("click", copyCoords);
+    els.btnFollow.addEventListener("click", function () {
+      if (state.follow) setFollow(false);
+      else recenter();
+    });
+    els.btnRecenter.addEventListener("click", recenter);
+    els.btnCompass.addEventListener("click", enableCompassFromTap);
+    els.btnMaps.addEventListener("click", function (e) {
+      if (els.btnMaps.getAttribute("aria-disabled") === "true") e.preventDefault();
+    });
+
+    var isPreview = /[?&]preview=1(?:&|$)/.test(location.search);
+    if (isPreview) {
+      /* sample data applied below; do not start live geolocation */
+    } else if (!window.isSecureContext) {
+      showBanner("<strong>Secure connection required.</strong> Location and compass only work on HTTPS or localhost. Open this page from a secure URL, then allow location when prompted.");
+    } else {
+      startGeolocation();
+    }
+
+    var needsIOSPermission = typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function";
+    if (needsIOSPermission) {
+      els.btnCompass.classList.add("visible");
+    } else {
+      startOrientationListeners();
+      setTimeout(function () {
+        if (!state.orientationLive) els.btnCompass.classList.add("visible");
+      }, 3000);
+    }
+
+    initMap();
+
+    if (isPreview) {
+      hideBanner();
+      applyPosition({
+        latitude: 40.0274,
+        longitude: -105.307,
+        accuracy: 9,
+        altitude: 1760,
+        altitudeAccuracy: 12,
+        speed: null,
+        heading: null
+      });
+      setCompassHeading(47);
+      setFollow(true);
+    }
+  })();
+  </script>
+</body>
+</html>
